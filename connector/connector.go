@@ -2,13 +2,37 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"fmt"
 	"log"
+	"net/url"
+	"os"
+	"time"
 
 	"github.com/joho/godotenv"
 	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
-	"os"
 )
+
+
+type Demand struct {
+	City   string
+	Demand float64
+	Unit   string
+}
+
+type PackageBody struct {
+	Demands     []Demand
+	ValidUntil  time.Time
+	MetaContent string
+	Constraints map[string]interface{}
+}
+
+type Event struct {
+	IDPK string
+	Type string
+	PackageBody PackageBody
+}
 
 func main() {
 	err := godotenv.Load(".env")
@@ -17,25 +41,39 @@ func main() {
 	}
 
 	brokerURI := os.Getenv("RABBITMQ_URL")
+	for {
+		err = connectConsume(brokerURI)
+		if err != nil {
+			log.Printf("RabbitMQ Connection lost: %v", err)
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func connectConsume(brokerURI string) error {
+	u, err := url.Parse(brokerURI)
+	if err != nil {
+		return fmt.Errorf("invalid RABBITMQ_URL: %v", err)
+	}
+
+	connOpts := &rmq.AmqpConnOptions{
+		TLSConfig: &tls.Config{ServerName: u.Hostname()},
+	}
 
 	ctx := context.Background()
-	env := rmq.NewEnvironment(brokerURI, nil)
+	env := rmq.NewEnvironment(brokerURI, connOpts)
 	conn, err := env.NewConnection(ctx)
 	if err != nil {
-		log.Panicf("Failed to connect to RabbitMQ: %v", err)
+		return fmt.Errorf("failed to connect to RabbitMQ: %v", err)
 	}
 	defer func() {
 		_ = env.CloseConnections(context.Background())
 	}()
 
-	_, err = conn.Management().DeclareQueue(ctx, &rmq.QuorumQueueSpecification{Name: "hello"})
+	consumer, err := conn.NewConsumer(ctx, "observer.27.q", nil)
 	if err != nil {
-		log.Panicf("Failed to declare a queue: %v", err)
-	}
-
-	consumer, err := conn.NewConsumer(ctx, "hello", nil)
-	if err != nil {
-		log.Panicf("Failed to create consumer: %v", err)
+		return fmt.Errorf("failed to create consumer: %v", err)
 	}
 	defer func() { _ = consumer.Close(context.Background()) }()
 
@@ -44,9 +82,9 @@ func main() {
 		delivery, err := consumer.Receive(ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
-				return
+				return nil
 			}
-			log.Panicf("Failed to receive a message: %v", err)
+			return fmt.Errorf("failed to receive a message: %v", err)
 		}
 		msg := delivery.Message()
 		var body string
@@ -56,7 +94,7 @@ func main() {
 		log.Printf("Received a message: %s", body)
 		err = delivery.Accept(ctx)
 		if err != nil {
-			log.Panicf("Failed to accept message: %v", err)
+			return fmt.Errorf("failed to accept message: %v", err)
 		}
 	}
 }
