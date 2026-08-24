@@ -1,48 +1,46 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"time"
 
-	"github.com/joho/godotenv"
 	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
 
 
 type Demand struct {
-	City   string
-	Demand float64
-	Unit   string
+	City   string `json:"city"`
+	Demand float64 `json:"demand"`
+	Unit   string `json:"unit"`
 }
 
 type PackageBody struct {
-	Demands     []Demand
-	ValidUntil  time.Time
-	MetaContent string
-	Constraints map[string]interface{}
+	Demands     []Demand `json:"demands"`
+	ValidUntil  time.Time `json:"validUntil"`
+	MetaContent string `json:"metaContent"`
+	Constraints map[string]interface{} `json:"constraints"`
 }
 
 type Event struct {
-	IDPK string
-	Type string
-	PackageBody PackageBody
+	IDPK string `json:"idpk"`
+	Type string `json:"type"`
+	PackageBody PackageBody `json:"packageBody"`
+	ReceivedAt time.Time `json:"receivedAt"`
 }
 
 func main() {
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Panicf("Error loading .env file: %v", err)
-	}
-
 	brokerURI := os.Getenv("RABBITMQ_URL")
 	for {
-		err = connectConsume(brokerURI)
+		err := connectConsume(brokerURI)
 		if err != nil {
 			log.Printf("RabbitMQ Connection lost: %v", err)
 		}
@@ -87,14 +85,48 @@ func connectConsume(brokerURI string) error {
 			return fmt.Errorf("failed to receive a message: %v", err)
 		}
 		msg := delivery.Message()
-		var body string
-		if len(msg.Data) > 0 {
-			body = string(msg.Data[0])
+		processErr := processMessage(msg.GetData())
+		if processErr != nil {
+			return fmt.Errorf("Error processing message: %v", processErr)
 		}
-		log.Printf("Received a message: %s", body)
+
 		err = delivery.Accept(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to accept message: %v", err)
 		}
 	}
+}
+
+func processMessage(body []byte) error {
+	// parse json message into Event struct
+	var event Event
+	
+	if err := json.Unmarshal(body, &event); err != nil {
+		return fmt.Errorf("failed to unmarshal message: %v", err)
+	}
+
+	// add receivedAt timestamp to the event
+	event.ReceivedAt = time.Now().UTC()
+
+	// convert Event struct to json
+	jsonBody, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %v", err)
+	}
+
+	// log.Printf("Processed message: %s", string(jsonBody))
+	// TODO: send POST req to master
+	masterURL := os.Getenv("MASTER_URL")
+	if masterURL == "" {
+		return fmt.Errorf("MASTER_URL is not set")
+	}
+
+	resp, err := http.Post(masterURL+"/events", "application/json", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return fmt.Errorf("failed to send POST request to master: %v", err)
+	}
+	defer resp.Body.Close()
+
+	return nil
+
 }
