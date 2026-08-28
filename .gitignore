@@ -1,0 +1,14 @@
+venv
+
+*.pem
+*.env
+
+# go files
+*.mod
+*.sum
+
+# python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

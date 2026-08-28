@@ -16,25 +16,24 @@ import (
 	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
 
-
 type Demand struct {
-	City   string `json:"city"`
+	City   string  `json:"city"`
 	Demand float64 `json:"demand"`
-	Unit   string `json:"unit"`
+	Unit   string  `json:"unit"`
 }
 
 type PackageBody struct {
-	Demands     []Demand `json:"demands"`
-	ValidUntil  time.Time `json:"validUntil"`
-	MetaContent string `json:"metaContent"`
+	Demands     []Demand               `json:"demands"`
+	ValidUntil  time.Time              `json:"validUntil"`
+	MetaContent string                 `json:"metaContent"`
 	Constraints map[string]interface{} `json:"constraints"`
 }
 
 type Event struct {
-	IDPK string `json:"idpk"`
-	Type string `json:"type"`
+	IDPK        string      `json:"idpk"`
+	Type        string      `json:"type"`
 	PackageBody PackageBody `json:"packageBody"`
-	ReceivedAt time.Time `json:"receivedAt"`
+	ReceivedAt  time.Time   `json:"receivedAt"`
 }
 
 func main() {
@@ -97,10 +96,14 @@ func connectConsume(brokerURI string) error {
 	}
 }
 
+var httpClient = &http.Client{
+	Timeout: 10 * time.Second,
+}
+
 func processMessage(body []byte) error {
 	// parse json message into Event struct
 	var event Event
-	
+
 	if err := json.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal message: %v", err)
 	}
@@ -115,13 +118,17 @@ func processMessage(body []byte) error {
 	}
 
 	// log.Printf("Processed message: %s", string(jsonBody))
-	// TODO: send POST req to master
+	// send POST req to master
 	masterURL := os.Getenv("MASTER_URL")
 	if masterURL == "" {
 		return fmt.Errorf("MASTER_URL is not set")
 	}
 
-	resp, err := http.Post(masterURL+"/events", "application/json", bytes.NewBuffer(jsonBody))
+	resp, err := httpClient.Post(
+		masterURL+"/events",
+		"application/json",
+		bytes.NewBuffer(jsonBody),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to send POST request to master: %v", err)
 	}
