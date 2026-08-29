@@ -9,7 +9,7 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 15s
       timeout: 10s
-      retries: 3
+      retries: 5
       start_period: 10s
     depends_on:
       db:
@@ -20,8 +20,15 @@ services:
     environment:
       - MASTER_URL=http://master:8080
       - RABBITMQ_URL=${RABBITMQ_URL}
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/connector_ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
     depends_on:
-      - master
+      master:
+        condition: service_healthy
 
   db:
     image: postgres:17
@@ -33,7 +40,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 15s
       timeout: 10s
-      retries: 10
+      retries: 5
+      start_period: 10s
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

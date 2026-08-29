@@ -36,7 +36,14 @@ type Event struct {
 	ReceivedAt  time.Time   `json:"receivedAt"`
 }
 
+const healthFile = "/tmp/connector_ready"
+
 func main() {
+	// need to remove since it might be stale from a previous run
+	if err := os.Remove(healthFile); err != nil && !os.IsNotExist(err) {
+		log.Fatalf("Failed to remove health file: %v", err)
+	}
+
 	brokerURI := os.Getenv("RABBITMQ_URL")
 	for {
 		err := connectConsume(brokerURI)
@@ -67,14 +74,25 @@ func connectConsume(brokerURI string) error {
 	defer func() {
 		_ = env.CloseConnections(context.Background())
 	}()
-
+	
 	consumer, err := conn.NewConsumer(ctx, "observer.27.q", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create consumer: %v", err)
 	}
+	if err = os.WriteFile(healthFile, []byte("ready"), 0644); err != nil {
+		return fmt.Errorf("failed to create health file: %v", err)
+	}
+	// remove health file on exit
+	defer func() {
+		if err := os.Remove(healthFile); err != nil && !os.IsNotExist(err) {
+			log.Printf("Failed to remove health file: %v", err)
+		}
+	}()
 	defer func() { _ = consumer.Close(context.Background()) }()
 
 	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
+
+	// process messages in a loop
 	for {
 		delivery, err := consumer.Receive(ctx)
 		if err != nil {
